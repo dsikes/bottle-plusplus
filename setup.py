@@ -8,7 +8,7 @@ if sys.version_info < (2, 7):
 
 import bottle
 
-setup(name='bottle',
+setup(name='bottle-plusplus',
       version=bottle.__version__,
       description='Fast and simple WSGI-framework for small web-applications.',
       long_description=bottle.__doc__,
@@ -18,6 +18,9 @@ setup(name='bottle',
       url='http://bottlepy.org/',
       py_modules=['bottle'],
       scripts=['bottle.py'],
+      install_requires=[
+          "Jinja2>=2.10.1",
+        ]
       license='MIT',
       platforms='any',
       classifiers=['Development Status :: 4 - Beta',

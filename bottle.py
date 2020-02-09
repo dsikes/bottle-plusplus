@@ -11,13 +11,19 @@ Homepage and documentation: http://bottlepy.org/
 
 Copyright (c) 2009-2018, Marcel Hellkamp.
 License: MIT (see LICENSE for details)
+
+
+Bottle++
+Copyright (c) 2020, Dan Sikes.
+Homepage and documentation: http://bottlepy-plusplus.org/
+
 """
 
 import sys
 
-__author__ = 'Marcel Hellkamp'
-__version__ = '0.13-dev'
-__license__ = 'MIT'
+__author__ = 'Dan Sikes'
+__version__ = '0.1.0'
+# __license__ = 'MIT'
 
 ###############################################################################
 # Command-line interface ######################################################
@@ -677,10 +683,10 @@ class Bottle(object):
 
             for controller in self.controllers:
                 for routeDefinition in self.controllers[controller].routeDefinitions:
-                    print(routeDefinition)
                     r = Route(self, routeDefinition['rule'], routeDefinition['method'], getattr(self.controllers[controller], routeDefinition['callback']))
                     self.add_route(r)
-
+                    if DEBUG:
+                        print(routeDefinition)
     #: If true, most exceptions are caught and returned as :exc:`HTTPError`
     catchall = DictProperty('config', 'catchall')
 
