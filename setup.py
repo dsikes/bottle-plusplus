@@ -20,7 +20,7 @@ setup(name='bottle-plusplus',
       scripts=['bottle.py'],
       install_requires=[
           "Jinja2>=2.10.1",
-        ]
+        ],
       license='MIT',
       platforms='any',
       classifiers=['Development Status :: 4 - Beta',

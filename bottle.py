@@ -22,8 +22,8 @@ Homepage and documentation: http://bottlepy-plusplus.org/
 import sys
 
 __author__ = 'Dan Sikes'
-__version__ = '0.1.0'
-# __license__ = 'MIT'
+__version__ = '0.1.0-dev'
+__license__ = 'MIT'
 
 ###############################################################################
 # Command-line interface ######################################################
@@ -4348,7 +4348,7 @@ class Controller:
                 self.routeDefinitions.append(routeDefinition)
 
 ###############################################################################
-# Bottle++ Controllers Autoloader ##############################################
+# Bottle++ Controllers Autoloader #############################################
 ###############################################################################
 class ControllersAutoloader:
     """ this class will autoload any controllers in the "controllers" directory
@@ -4366,6 +4366,19 @@ class ControllersAutoloader:
                 self.controllers[modulename] = instance
     def load(self):
         return self.controllers
+
+###############################################################################
+# Bottle++ View ###############################################################
+###############################################################################
+
+class View:
+    def __init__(self, view):
+        self.view = view
+    def render(self, **kwargs):
+        return jinja2_template("views/%s" % (self.view), **kwargs)
+
+
+
 
 ###############################################################################
 # Constants and Globals ########################################################
