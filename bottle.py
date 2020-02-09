@@ -3652,7 +3652,7 @@ _debug = debug
 
 
 def run(app=None,
-        server='wsgiref',
+        server='tornado',
         host='127.0.0.1',
         port=8080,
         interval=1,

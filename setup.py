@@ -20,6 +20,7 @@ setup(name='bottle-plusplus',
       scripts=['bottle.py'],
       install_requires=[
           "Jinja2>=2.10.1",
+          "tornado>=6.0.3"
         ],
       license='MIT',
       platforms='any',
