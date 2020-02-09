@@ -677,6 +677,7 @@ class Bottle(object):
 
             for controller in self.controllers:
                 for routeDefinition in self.controllers[controller].routeDefinitions:
+                    print(routeDefinition)
                     r = Route(self, routeDefinition['rule'], routeDefinition['method'], getattr(self.controllers[controller], routeDefinition['callback']))
                     self.add_route(r)
 
@@ -4311,8 +4312,32 @@ class Controller:
                 path = "/%s" % (prop)
                 if getattr(self, "url_prefix"):
                     path = "/%s/%s" % (self.url_prefix, prop)
+                
+                if 'get_' in path:
+                    path = path.replace("get_", "")
+                if 'put_' in path:
+                    path = path.replace("put_", "")
+                if 'post_' in path:
+                    path = path.replace("post_", "")
+                if 'patch_' in path:
+                    path = path.replace("patch_", "")
+                if 'delete_' in path:
+                    path = path.replace("delete_", "")
+
                 routeDefinition['rule'] = path
+
                 routeDefinition['method'] = 'GET'
+                if prop.startswith("get_"):
+                    routeDefinition['method'] = 'GET'
+                if prop.startswith("post_"):
+                    routeDefinition['method'] = 'POST'
+                if prop.startswith("put_"):
+                    routeDefinition['method'] = 'PUT'
+                if prop.startswith("patch_"):
+                    routeDefinition['method'] = 'PATCH'
+                if prop.startswith("delete_"):
+                    routeDefinition['method'] = 'DELETE'
+
                 routeDefinition['callback'] = prop
                 self.routeDefinitions.append(routeDefinition)
 
