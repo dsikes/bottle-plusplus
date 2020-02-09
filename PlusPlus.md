@@ -43,3 +43,8 @@ Bottle++ brings a few new goodies to the awesome Bottle micro framework.
 
 - Scaffolding CLI tool
   - Generate common files to save yourself some typing.
+
+## TODOs
+
+- [ ] Add Config File Parser
+- [ ] Add Environment Variable Support
