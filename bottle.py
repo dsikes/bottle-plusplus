@@ -670,6 +670,16 @@ class Bottle(object):
         self.install(JSONPlugin())
         self.install(TemplatePlugin())
 
+        # Controllers (Bottle++)
+        if kwargs.get('controllers') is not None:
+            c = kwargs.get('controllers')
+            self.controllers = ControllersAutoloader(c.CONTROLLERS_DIR).load()
+
+            for controller in self.controllers:
+                for routeDefinition in self.controllers[controller].routeDefinitions:
+                    r = Route(self, routeDefinition['rule'], routeDefinition['method'], getattr(self.controllers[controller], routeDefinition['callback']))
+                    self.add_route(r)
+
     #: If true, most exceptions are caught and returned as :exc:`HTTPError`
     catchall = DictProperty('config', 'catchall')
 
@@ -4289,15 +4299,22 @@ jinja2_view = functools.partial(view, template_adapter=Jinja2Template)
 ###############################################################################
 class Controller:
     def __init__(self):
+        self.routeDefinitions = []
         self._get_routable_methods()
 
     def _get_routable_methods(self):
         """ this internal private method scans all methods within the current
         class and returns a list of matching methods to map them to routes """
         for prop in dir(self):
+            routeDefinition = {}
             if callable(getattr(self, prop)) and not prop.startswith("_"):
-                print("%s is a method" % (prop))
-    
+                path = "/%s" % (prop)
+                if getattr(self, "url_prefix"):
+                    path = "/%s/%s" % (self.url_prefix, prop)
+                routeDefinition['rule'] = path
+                routeDefinition['method'] = 'GET'
+                routeDefinition['callback'] = prop
+                self.routeDefinitions.append(routeDefinition)
 
 ###############################################################################
 # Bottle++ Controllers Autoloader ##############################################
@@ -4306,6 +4323,7 @@ class ControllersAutoloader:
     """ this class will autoload any controllers in the "controllers" directory
     that adhere to the controller naming convention """
     def __init__(self, ControllersDir):
+        self.controllers = {}
         import importlib
         sys.path.insert(0, ControllersDir)
         for filename in os.listdir(ControllersDir):
@@ -4314,7 +4332,9 @@ class ControllersAutoloader:
                 module = importlib.import_module(modulename)
                 class_ = getattr(module, modulename)
                 instance = class_()
-                continue
+                self.controllers[modulename] = instance
+    def load(self):
+        return self.controllers
 
 ###############################################################################
 # Constants and Globals ########################################################
