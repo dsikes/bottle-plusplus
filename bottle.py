@@ -4285,6 +4285,38 @@ cheetah_view = functools.partial(view, template_adapter=CheetahTemplate)
 jinja2_view = functools.partial(view, template_adapter=Jinja2Template)
 
 ###############################################################################
+# Bottle++ Controllers ########################################################
+###############################################################################
+class Controller:
+    def __init__(self):
+        self._get_routable_methods()
+
+    def _get_routable_methods(self):
+        """ this internal private method scans all methods within the current
+        class and returns a list of matching methods to map them to routes """
+        for prop in dir(self):
+            if callable(getattr(self, prop)) and not prop.startswith("_"):
+                print("%s is a method" % (prop))
+    
+
+###############################################################################
+# Bottle++ Controllers Autoloader ##############################################
+###############################################################################
+class ControllersAutoloader:
+    """ this class will autoload any controllers in the "controllers" directory
+    that adhere to the controller naming convention """
+    def __init__(self, ControllersDir):
+        import importlib
+        sys.path.insert(0, ControllersDir)
+        for filename in os.listdir(ControllersDir):
+            if filename.endswith(".py") and filename != "__init__.py":
+                modulename = filename.replace(".py", "")
+                module = importlib.import_module(modulename)
+                class_ = getattr(module, modulename)
+                instance = class_()
+                continue
+
+###############################################################################
 # Constants and Globals ########################################################
 ###############################################################################
 
