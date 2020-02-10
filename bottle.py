@@ -3360,7 +3360,10 @@ def run(app=None,
         :param options: Options passed to the server adapter.
      """
     if NORUN: return
-    reloader = app.config.reloader or reloader
+    if not hasattr(app.config, 'reloader'):
+        app.config.reloader = False
+    
+    reloader = app.config.reloader
     try:
         app = app or default_app()
         if isinstance(app, basestring):
@@ -3381,14 +3384,23 @@ def run(app=None,
         if isinstance(server, basestring):
             server = load(server)
         if isinstance(server, type):
-            host = app.config.host or host
-            port = app.config.port or port
+
+            if not hasattr(app.config, 'host'):
+                app.config.host = host
+            if not hasattr(app.config, 'port'):
+                app.config.port = port
+            
+            host = app.config.host
+            port = app.config.port
 
             server = server(host=host, port=port, **kargs)
         if not isinstance(server, ServerAdapter):
             raise ValueError("Unknown or unsupported server: %r" % server)
 
-        server.quiet = server.quiet or quiet
+        if not hasattr(app.config, 'quiet'):
+            app.config.quiet = quiet
+        server.quiet = app.config.quiet
+        
         if not server.quiet:
             _stderr("Config: %s/%s.yaml\n" % (app.config_dir, app.env))
             _stderr("Version: %s\nServer: %s\n" %
