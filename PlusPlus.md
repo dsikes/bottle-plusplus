@@ -46,5 +46,8 @@ Bottle++ brings a few new goodies to the awesome Bottle micro framework.
 
 ## TODOs
 
-- [ ] Add Config File Parser
-- [ ] Add Environment Variable Support
+- [ * ] Add Config File Parser
+- [ * ] Add Environment Variable Support
+- [ ] Convert error page to use Jinja
+- [ ] Update template to iterate over config values when in debug mode
+- [ ] Update template to iterate over defined routes when in debug mode

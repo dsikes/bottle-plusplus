@@ -646,21 +646,21 @@ class Bottle(object):
         cfg.meta_set('catchall', 'validate', bool)
         return cfg
 
-    def __init__(self, **kwargs):
-        
-        config_dir = "config"
+    def __init__(self, app_root, **kwargs):
+        self.app_root = app_root
+        self.config_dir = "config"
         if kwargs.get('config_dir') is not None:
-            config_dir = kwargs.get('config_dir')
+            self.config_dir = kwargs.get('config_dir')
         
         # default environment is "dev"
-        env = 'dev'
+        self.env = 'dev'
         if 'APPENV' in os.environ:
-            env = os.environ['APPENV']
+            self.env = os.environ['APPENV']
 
         if kwargs.get('env') is not None:
-            env = kwargs.get('env')
+            self.env = kwargs.get('env')
         
-        self.config = Config(config_dir=config_dir, env=env)
+        self.config = Config(config_dir=self.config_dir, env=self.env)
 
         #: A :class:`ConfigDict` for app specific configuration.
         self.internal_config = self._global_config._make_overlay()
@@ -695,7 +695,13 @@ class Bottle(object):
         self.plugins = []  # List of installed plugins.
         self.install(JSONPlugin())
         self.install(TemplatePlugin())
+
+        # Debug
+        if not hasattr(self.config, 'debug'):
+            self.config.debug = False
         
+        global DEBUG
+        DEBUG = bool(self.config.debug)
         # Controllers (Bottle++)
 
         if hasattr(self.config, 'controllers'):
@@ -712,9 +718,6 @@ class Bottle(object):
                 for routeDefinition in self.controllers[controller].routeDefinitions:
                     r = Route(self, routeDefinition['rule'], routeDefinition['method'], getattr(self.controllers[controller], routeDefinition['callback']))
                     self.add_route(r)
-                    if DEBUG:
-                        print(routeDefinition)
-
     #: If true, most exceptions are caught and returned as :exc:`HTTPError`
     catchall = DictProperty('config', 'catchall')
 
@@ -1027,6 +1030,8 @@ class Bottle(object):
         return decorator(callback) if callback else decorator
 
     def default_error_handler(self, res):
+        if self.config.debug:
+            res.app = self
         return tob(template(ERROR_PAGE_TEMPLATE, e=res, template_settings=dict(name='__ERROR_PAGE_TEMPLATE')))
 
     def _handle(self, environ):
@@ -2997,15 +3002,6 @@ def static_file(filename, root,
 # HTTP Utilities and MISC (TODO) ###############################################
 ###############################################################################
 
-
-def debug(mode=True):
-    """ Change the debug level.
-    There is only one debug level supported at the moment."""
-    global DEBUG
-    if mode: warnings.simplefilter('default')
-    DEBUG = bool(mode)
-
-
 def http_date(value):
     if isinstance(value, basestring):
         return value
@@ -3284,35 +3280,15 @@ class TornadoServer(ServerAdapter):
     """ The super hyped asynchronous server by facebook. Untested. """
 
     def run(self, handler):  # pragma: no cover
-        import tornado.wsgi, tornado.httpserver, tornado.ioloop
+        import tornado.wsgi, tornado.httpserver, tornado.ioloop, tornado.autoreload
         container = tornado.wsgi.WSGIContainer(handler)
         server = tornado.httpserver.HTTPServer(container)
         server.listen(port=self.port, address=self.host)
         tornado.ioloop.IOLoop.instance().start()
 
-server_names = {'tornado': TornadoServer}
-# server_names = {
-#     'cgi': CGIServer,
-#     'flup': FlupFCGIServer,
-#     'wsgiref': WSGIRefServer,
-#     'waitress': WaitressServer,
-#     'cherrypy': CherryPyServer,
-#     'cheroot': CherootServer,
-#     'paste': PasteServer,
-#     'fapws3': FapwsServer,
-#     'tornado': TornadoServer,
-#     'gae': AppEngineServer,
-#     'twisted': TwistedServer,
-#     'diesel': DieselServer,
-#     'meinheld': MeinheldServer,
-#     'gunicorn': GunicornServer,
-#     'eventlet': EventletServer,
-#     'gevent': GeventServer,
-#     'bjoern': BjoernServer,
-#     'aiohttp': AiohttpServer,
-#     'uvloop': AiohttpUVLoopServer,
-#     'auto': AutoServer,
-# }
+server_names = {
+    'tornado': TornadoServer
+}
 
 ###############################################################################
 # Application Control ##########################################################
@@ -3354,7 +3330,7 @@ def load_app(target):
         NORUN = nr_old
 
 
-_debug = debug
+# _debug = debug
 
 
 def run(app=None,
@@ -3384,74 +3360,50 @@ def run(app=None,
         :param options: Options passed to the server adapter.
      """
     if NORUN: return
-    if reloader and not os.environ.get('BOTTLE_CHILD'):
-        import subprocess
-        lockfile = None
-        try:
-            fd, lockfile = tempfile.mkstemp(prefix='bottle.', suffix='.lock')
-            os.close(fd)  # We only need this file to exist. We never write to it
-            while os.path.exists(lockfile):
-                args = [sys.executable] + sys.argv
-                environ = os.environ.copy()
-                environ['BOTTLE_CHILD'] = 'true'
-                environ['BOTTLE_LOCKFILE'] = lockfile
-                p = subprocess.Popen(args, env=environ)
-                while p.poll() is None:  # Busy wait...
-                    os.utime(lockfile, None)  # I am alive!
-                    time.sleep(interval)
-                if p.poll() != 3:
-                    if os.path.exists(lockfile): os.unlink(lockfile)
-                    sys.exit(p.poll())
-        except KeyboardInterrupt:
-            pass
-        finally:
-            if os.path.exists(lockfile):
-                os.unlink(lockfile)
-        return
-
+    reloader = app.config.reloader or reloader
     try:
-        if debug is not None: _debug(debug)
         app = app or default_app()
         if isinstance(app, basestring):
             app = load_app(app)
         if not callable(app):
             raise ValueError("Application is not callable: %r" % app)
 
+        if not hasattr(app.config, 'debug'):
+            app.config.debug = False
+
         for plugin in plugins or []:
             if isinstance(plugin, basestring):
                 plugin = load(plugin)
             app.install(plugin)
-
-        if config:
-            app.config.update(config)
 
         if server in server_names:
             server = server_names.get(server)
         if isinstance(server, basestring):
             server = load(server)
         if isinstance(server, type):
+            host = app.config.host or host
+            port = app.config.port or port
+
             server = server(host=host, port=port, **kargs)
         if not isinstance(server, ServerAdapter):
             raise ValueError("Unknown or unsupported server: %r" % server)
 
         server.quiet = server.quiet or quiet
         if not server.quiet:
-            _stderr("Bottle v%s server starting up (using %s)...\n" %
+            _stderr("Config: %s/%s.yaml\n" % (app.config_dir, app.env))
+            _stderr("Version: %s\nServer: %s\n" %
                     (__version__, repr(server)))
             if server.host.startswith("unix:"):
                 _stderr("Listening on %s\n" % server.host)
             else:
-                _stderr("Listening on http://%s:%d/\n" %
+                _stderr("Available at http://%s:%d/\n" %
                         (server.host, server.port))
             _stderr("Hit Ctrl-C to quit.\n\n")
-
-        if reloader:
-            lockfile = os.environ.get('BOTTLE_LOCKFILE')
-            bgcheck = FileCheckerThread(lockfile, interval)
-            with bgcheck:
-                server.run(app)
-            if bgcheck.status == 'reload':
-                sys.exit(3)
+        
+        # only run the reloader if both reloader and debug are TRUE
+        if reloader and debug:
+            ReloaderThread()
+            server.run(app)
         else:
             server.run(app)
     except KeyboardInterrupt:
@@ -3465,39 +3417,15 @@ def run(app=None,
         time.sleep(interval)
         sys.exit(3)
 
-
-class FileCheckerThread(threading.Thread):
+class ReloaderThread(threading.Thread):
     """ Interrupt main-thread as soon as a changed module file is detected,
         the lockfile gets deleted or gets too old. """
 
-    def __init__(self, lockfile, interval):
+    def __init__(self):
+        import tornado.autoreload        
         threading.Thread.__init__(self)
         self.daemon = True
-        self.lockfile, self.interval = lockfile, interval
-        #: Is one of 'reload', 'error' or 'exit'
-        self.status = None
-
-    def run(self):
-        exists = os.path.exists
-        mtime = lambda p: os.stat(p).st_mtime
-        files = dict()
-
-        for module in list(sys.modules.values()):
-            path = getattr(module, '__file__', '') or ''
-            if path[-4:] in ('.pyo', '.pyc'): path = path[:-1]
-            if path and exists(path): files[path] = mtime(path)
-
-        while not self.status:
-            if not exists(self.lockfile)\
-            or mtime(self.lockfile) < time.time() - self.interval - 5:
-                self.status = 'error'
-                thread.interrupt_main()
-            for path, lmtime in list(files.items()):
-                if not exists(path) or mtime(path) > lmtime:
-                    self.status = 'reload'
-                    thread.interrupt_main()
-                    break
-            time.sleep(self.interval)
+        tornado.autoreload.start()
 
     def __enter__(self):
         self.start()
@@ -3973,8 +3901,13 @@ class Controller:
             if callable(getattr(self, prop)) and not prop.startswith("_"):
                 path = "/%s" % (prop)
                 if getattr(self, "url_prefix"):
-                    path = "/%s/%s" % (self.url_prefix, prop)
-                
+                    if self.url_prefix.startswith("/"):
+                        path = "%s/%s" % (self.url_prefix, prop)
+                    else:
+                        path = "/%s/%s" % (self.url_prefix, prop)
+                else:
+                    path = "/%s" % (prop)
+                    
                 if 'get_' in path:
                     path = path.replace("get_", "")
                 if 'put_' in path:
@@ -3985,7 +3918,17 @@ class Controller:
                     path = path.replace("patch_", "")
                 if 'delete_' in path:
                     path = path.replace("delete_", "")
+                
+                if path.endswith("index"):
+                    path = path.replace("index", "")
+                
+                if path.endswith("/"):
+                    path = path[:-1]
 
+                if path == "":
+                    path = "/"
+                
+                routeDefinition['controller'] = self.__class__.__name__
                 routeDefinition['rule'] = path
 
                 routeDefinition['method'] = 'GET'
@@ -4021,6 +3964,8 @@ class ControllersAutoloader:
                     class_ = getattr(module, modulename)
                     instance = class_()
                     self.controllers[modulename] = instance
+            if DEBUG:
+                self.controllers["UtilityController"] = UtilityController()
         except FileNotFoundError as notfound:
             print("ERROR: Unable to load controllers.\nInvalid Controller Directory: %s" % (ControllersDir))
             sys.exit(1)
@@ -4139,8 +4084,20 @@ class Config:
                 if confopts is not None:
                     for opt in confopts:
                         setattr(self, opt, confopts[opt])
-            # if DEBUG:
-            print("config: %s" % (config))
+
+###############################################################################
+# Utility Controller ##########################################################
+###############################################################################
+class UtilityController(Controller):
+    """ Utility Controller """
+    def __init__(self):
+        self.url_prefix = "_utils"
+        super().__init__()
+
+    def get_index(self):
+        """ method should be reachable at GET /_utils """
+        return {"utils": True}
+
 
 ###############################################################################
 # Constants and Globals ########################################################
@@ -4182,6 +4139,9 @@ ERROR_PAGE_TEMPLATE = """
             <p>Sorry, the requested URL <tt>{{repr(request.url)}}</tt>
                caused an error:</p>
             <pre>{{e.body}}</pre>
+
+            <b>DEBUG MODE: </b> {{DEBUG}}
+
             %%if DEBUG and e.exception:
               <h2>Exception:</h2>
               %%try:
@@ -4195,6 +4155,12 @@ ERROR_PAGE_TEMPLATE = """
               <h2>Traceback:</h2>
               <pre>{{e.traceback}}</pre>
             %%end
+
+            %%if DEBUG:
+              <h2>Configured Routes:</h2>
+              <pre></pre>
+            %%end
+
         </body>
     </html>
 %%except ImportError:
