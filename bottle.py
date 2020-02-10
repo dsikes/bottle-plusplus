@@ -547,7 +547,7 @@ class Route(object):
         #: Additional keyword arguments passed to the :meth:`Bottle.route`
         #: decorator are stored in this dictionary. Used for route-specific
         #: plugin configuration and meta-data.
-        self.config = app.config._make_overlay()
+        self.config = app.internal_config._make_overlay()
         self.config.load_dict(config)
 
     @cached_property
@@ -647,12 +647,27 @@ class Bottle(object):
         return cfg
 
     def __init__(self, **kwargs):
+        
+        config_dir = "config"
+        if kwargs.get('config_dir') is not None:
+            config_dir = kwargs.get('config_dir')
+        
+        # default environment is "dev"
+        env = 'dev'
+        if 'APPENV' in os.environ:
+            env = os.environ['APPENV']
+
+        if kwargs.get('env') is not None:
+            env = kwargs.get('env')
+        
+        self.config = Config(config_dir=config_dir, env=env)
+
         #: A :class:`ConfigDict` for app specific configuration.
-        self.config = self._global_config._make_overlay()
-        self.config._add_change_listener(
+        self.internal_config = self._global_config._make_overlay()
+        self.internal_config._add_change_listener(
             functools.partial(self.trigger_hook, 'config'))
 
-        self.config.update({
+        self.internal_config.update({
             "catchall": True
         })
 
@@ -680,11 +695,18 @@ class Bottle(object):
         self.plugins = []  # List of installed plugins.
         self.install(JSONPlugin())
         self.install(TemplatePlugin())
-
+        
         # Controllers (Bottle++)
+
+        if hasattr(self.config, 'controllers'):
+            self.controllers = ControllersAutoloader(self.config.controllers).load()
+        
         if kwargs.get('controllers') is not None:
             c = kwargs.get('controllers')
             self.controllers = ControllersAutoloader(c.CONTROLLERS_DIR).load()
+        
+        if not hasattr(self, 'controllers'):
+            self.controllers = ControllersAutoloader("controllers").load()
 
             for controller in self.controllers:
                 for routeDefinition in self.controllers[controller].routeDefinitions:
@@ -692,20 +714,7 @@ class Bottle(object):
                     self.add_route(r)
                     if DEBUG:
                         print(routeDefinition)
-        
-        appconfig_dir = "config"
-        if kwargs.get('appconfig_dir') is not None:
-            appconfig_dir = kwargs.get('appconfig_dir')
-        
-        # default environment is "dev"
-        env = 'dev'
-        if 'APPENV' in os.environ:
-            env = os.environ['APPENV']
 
-        if kwargs.get('env') is not None:
-            env = kwargs.get('env')
-        
-        self.appconfig = AppConfig(config_dir=appconfig_dir, env=env)
     #: If true, most exceptions are caught and returned as :exc:`HTTPError`
     catchall = DictProperty('config', 'catchall')
 
@@ -2033,13 +2042,13 @@ class JSONPlugin(object):
         self.json_dumps = json_dumps
 
     def setup(self, app):
-        app.config._define('json.enable', default=True, validate=bool,
+        app.internal_config._define('json.enable', default=True, validate=bool,
                           help="Enable or disable automatic dict->json filter.")
-        app.config._define('json.ascii', default=False, validate=bool,
+        app.internal_config._define('json.ascii', default=False, validate=bool,
                           help="Use only 7-bit ASCII characters in output.")
-        app.config._define('json.indent', default=True, validate=bool,
+        app.internal_config._define('json.indent', default=True, validate=bool,
                           help="Add whitespace to make json more readable.")
-        app.config._define('json.dump_func', default=None,
+        app.internal_config._define('json.dump_func', default=None,
                           help="If defined, use this function to transform"
                                " dict into json. The other options no longer"
                                " apply.")
@@ -4001,16 +4010,20 @@ class ControllersAutoloader:
     """ this class will autoload any controllers in the "controllers" directory
     that adhere to the controller naming convention """
     def __init__(self, ControllersDir):
-        self.controllers = {}
-        import importlib
-        sys.path.insert(0, ControllersDir)
-        for filename in os.listdir(ControllersDir):
-            if filename.endswith(".py") and filename != "__init__.py":
-                modulename = filename.replace(".py", "")
-                module = importlib.import_module(modulename)
-                class_ = getattr(module, modulename)
-                instance = class_()
-                self.controllers[modulename] = instance
+        try:
+            self.controllers = {}
+            import importlib
+            sys.path.insert(0, ControllersDir)
+            for filename in os.listdir(ControllersDir):
+                if filename.endswith(".py") and filename != "__init__.py":
+                    modulename = filename.replace(".py", "")
+                    module = importlib.import_module(modulename)
+                    class_ = getattr(module, modulename)
+                    instance = class_()
+                    self.controllers[modulename] = instance
+        except FileNotFoundError as notfound:
+            print("ERROR: Unable to load controllers.\nInvalid Controller Directory: %s" % (ControllersDir))
+            sys.exit(1)
     def load(self):
         return self.controllers
 
@@ -4059,10 +4072,10 @@ def _config_env(loader: Loader, node: yaml.Node) -> Any:
     """set value of key at node from environment variable"""
     if node.value in os.environ:
         return os.environ[node.value]
-    raise Exception("Undefined environment variable '%s' referenced in appconfig file." % (node.value))
+    raise Exception("Undefined environment variable '%s' referenced in config file." % (node.value))
 
 
-class AppConfig:
+class Config:
     '''
     This component is responsible for configuration management.
     CURRENT SOURCES:
@@ -4126,9 +4139,8 @@ class AppConfig:
                 if confopts is not None:
                     for opt in confopts:
                         setattr(self, opt, confopts[opt])
-        else:
-            raise Exception("a valid environment option must be set for appconfig")
-        print("appconfig: %s" % (config))
+            # if DEBUG:
+            print("config: %s" % (config))
 
 ###############################################################################
 # Constants and Globals ########################################################
