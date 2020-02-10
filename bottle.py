@@ -19,11 +19,16 @@ Homepage and documentation: http://bottlepy-plusplus.org/
 
 """
 
+import os
 import sys
+import yaml
+import json
+from typing import Any, IO
 
 __author__ = 'Dan Sikes'
 __version__ = '0.1.0-dev'
 __license__ = 'MIT'
+
 
 ###############################################################################
 # Command-line interface ######################################################
@@ -687,6 +692,20 @@ class Bottle(object):
                     self.add_route(r)
                     if DEBUG:
                         print(routeDefinition)
+        
+        appconfig_dir = "config"
+        if kwargs.get('appconfig_dir') is not None:
+            appconfig_dir = kwargs.get('appconfig_dir')
+        
+        # default environment is "dev"
+        env = 'dev'
+        if 'APPENV' in os.environ:
+            env = os.environ['APPENV']
+
+        if kwargs.get('env') is not None:
+            env = kwargs.get('env')
+        
+        self.appconfig = AppConfig(config_dir=appconfig_dir, env=env)
     #: If true, most exceptions are caught and returned as :exc:`HTTPError`
     catchall = DictProperty('config', 'catchall')
 
@@ -3252,156 +3271,6 @@ class ServerAdapter(object):
                           for k, v in self.options.items()])
         return "%s(%s)" % (self.__class__.__name__, args)
 
-
-class CGIServer(ServerAdapter):
-    quiet = True
-
-    def run(self, handler):  # pragma: no cover
-        from wsgiref.handlers import CGIHandler
-
-        def fixed_environ(environ, start_response):
-            environ.setdefault('PATH_INFO', '')
-            return handler(environ, start_response)
-
-        CGIHandler().run(fixed_environ)
-
-
-class FlupFCGIServer(ServerAdapter):
-    def run(self, handler):  # pragma: no cover
-        import flup.server.fcgi
-        self.options.setdefault('bindAddress', (self.host, self.port))
-        flup.server.fcgi.WSGIServer(handler, **self.options).run()
-
-
-class WSGIRefServer(ServerAdapter):
-    def run(self, app):  # pragma: no cover
-        from wsgiref.simple_server import make_server
-        from wsgiref.simple_server import WSGIRequestHandler, WSGIServer
-        import socket
-
-        class FixedHandler(WSGIRequestHandler):
-            def address_string(self):  # Prevent reverse DNS lookups please.
-                return self.client_address[0]
-
-            def log_request(*args, **kw):
-                if not self.quiet:
-                    return WSGIRequestHandler.log_request(*args, **kw)
-
-        handler_cls = self.options.get('handler_class', FixedHandler)
-        server_cls = self.options.get('server_class', WSGIServer)
-
-        if ':' in self.host:  # Fix wsgiref for IPv6 addresses.
-            if getattr(server_cls, 'address_family') == socket.AF_INET:
-
-                class server_cls(server_cls):
-                    address_family = socket.AF_INET6
-
-        self.srv = make_server(self.host, self.port, app, server_cls,
-                               handler_cls)
-        self.port = self.srv.server_port  # update port actual port (0 means random)
-        try:
-            self.srv.serve_forever()
-        except KeyboardInterrupt:
-            self.srv.server_close()  # Prevent ResourceWarning: unclosed socket
-            raise
-
-
-class CherryPyServer(ServerAdapter):
-    def run(self, handler):  # pragma: no cover
-        depr(0, 13, "The wsgi server part of cherrypy was split into a new "
-                    "project called 'cheroot'.", "Use the 'cheroot' server "
-                    "adapter instead of cherrypy.")
-        from cherrypy import wsgiserver # This will fail for CherryPy >= 9
-
-        self.options['bind_addr'] = (self.host, self.port)
-        self.options['wsgi_app'] = handler
-
-        certfile = self.options.get('certfile')
-        if certfile:
-            del self.options['certfile']
-        keyfile = self.options.get('keyfile')
-        if keyfile:
-            del self.options['keyfile']
-
-        server = wsgiserver.CherryPyWSGIServer(**self.options)
-        if certfile:
-            server.ssl_certificate = certfile
-        if keyfile:
-            server.ssl_private_key = keyfile
-
-        try:
-            server.start()
-        finally:
-            server.stop()
-
-
-class CherootServer(ServerAdapter):
-    def run(self, handler): # pragma: no cover
-        from cheroot import wsgi
-        from cheroot.ssl import builtin
-        self.options['bind_addr'] = (self.host, self.port)
-        self.options['wsgi_app'] = handler
-        certfile = self.options.pop('certfile', None)
-        keyfile = self.options.pop('keyfile', None)
-        chainfile = self.options.pop('chainfile', None)
-        server = wsgi.Server(**self.options)
-        if certfile and keyfile:
-            server.ssl_adapter = builtin.BuiltinSSLAdapter(
-                    certfile, keyfile, chainfile)
-        try:
-            server.start()
-        finally:
-            server.stop()
-
-
-class WaitressServer(ServerAdapter):
-    def run(self, handler):
-        from waitress import serve
-        serve(handler, host=self.host, port=self.port, _quiet=self.quiet, **self.options)
-
-
-class PasteServer(ServerAdapter):
-    def run(self, handler):  # pragma: no cover
-        from paste import httpserver
-        from paste.translogger import TransLogger
-        handler = TransLogger(handler, setup_console_handler=(not self.quiet))
-        httpserver.serve(handler,
-                         host=self.host,
-                         port=str(self.port), **self.options)
-
-
-class MeinheldServer(ServerAdapter):
-    def run(self, handler):
-        from meinheld import server
-        server.listen((self.host, self.port))
-        server.run(handler)
-
-
-class FapwsServer(ServerAdapter):
-    """ Extremely fast webserver using libev. See http://www.fapws.org/ """
-
-    def run(self, handler):  # pragma: no cover
-        import fapws._evwsgi as evwsgi
-        from fapws import base, config
-        port = self.port
-        if float(config.SERVER_IDENT[-2:]) > 0.4:
-            # fapws3 silently changed its API in 0.5
-            port = str(port)
-        evwsgi.start(self.host, port)
-        # fapws3 never releases the GIL. Complain upstream. I tried. No luck.
-        if 'BOTTLE_CHILD' in os.environ and not self.quiet:
-            _stderr("WARNING: Auto-reloading does not work with Fapws3.\n")
-            _stderr("         (Fapws3 breaks python thread support)\n")
-        evwsgi.set_base_module(base)
-
-        def app(environ, start_response):
-            environ['wsgi.multiprocess'] = False
-            return handler(environ, start_response)
-
-        evwsgi.wsgi_cb(('', app))
-        evwsgi.run()
-
-
 class TornadoServer(ServerAdapter):
     """ The super hyped asynchronous server by facebook. Untested. """
 
@@ -3412,201 +3281,29 @@ class TornadoServer(ServerAdapter):
         server.listen(port=self.port, address=self.host)
         tornado.ioloop.IOLoop.instance().start()
 
-
-class AppEngineServer(ServerAdapter):
-    """ Adapter for Google App Engine. """
-    quiet = True
-
-    def run(self, handler):
-        depr(0, 13, "AppEngineServer no longer required",
-             "Configure your application directly in your app.yaml")
-        from google.appengine.ext.webapp import util
-        # A main() function in the handler script enables 'App Caching'.
-        # Lets makes sure it is there. This _really_ improves performance.
-        module = sys.modules.get('__main__')
-        if module and not hasattr(module, 'main'):
-            module.main = lambda: util.run_wsgi_app(handler)
-        util.run_wsgi_app(handler)
-
-
-class TwistedServer(ServerAdapter):
-    """ Untested. """
-
-    def run(self, handler):
-        from twisted.web import server, wsgi
-        from twisted.python.threadpool import ThreadPool
-        from twisted.internet import reactor
-        thread_pool = ThreadPool()
-        thread_pool.start()
-        reactor.addSystemEventTrigger('after', 'shutdown', thread_pool.stop)
-        factory = server.Site(wsgi.WSGIResource(reactor, thread_pool, handler))
-        reactor.listenTCP(self.port, factory, interface=self.host)
-        if not reactor.running:
-            reactor.run()
-
-
-class DieselServer(ServerAdapter):
-    """ Untested. """
-
-    def run(self, handler):
-        from diesel.protocols.wsgi import WSGIApplication
-        app = WSGIApplication(handler, port=self.port)
-        app.run()
-
-
-class GeventServer(ServerAdapter):
-    """ Untested. Options:
-
-        * See gevent.wsgi.WSGIServer() documentation for more options.
-    """
-
-    def run(self, handler):
-        from gevent import pywsgi, local
-        if not isinstance(threading.local(), local.local):
-            msg = "Bottle requires gevent.monkey.patch_all() (before import)"
-            raise RuntimeError(msg)
-        if self.quiet:
-            self.options['log'] = None
-        address = (self.host, self.port)
-        server = pywsgi.WSGIServer(address, handler, **self.options)
-        if 'BOTTLE_CHILD' in os.environ:
-            import signal
-            signal.signal(signal.SIGINT, lambda s, f: server.stop())
-        server.serve_forever()
-
-
-class GunicornServer(ServerAdapter):
-    """ Untested. See http://gunicorn.org/configure.html for options. """
-
-    def run(self, handler):
-        from gunicorn.app.base import BaseApplication
-
-        if self.host.startswith("unix:"):
-            config = {'bind': self.host}
-        else:
-            config = {'bind': "%s:%d" % (self.host, self.port)}
-
-        config.update(self.options)
-
-        class GunicornApplication(BaseApplication):
-            def load_config(self):
-                for key, value in config.items():
-                    self.cfg.set(key, value)
-
-            def load(self):
-                return handler
-
-        GunicornApplication().run()
-
-
-class EventletServer(ServerAdapter):
-    """ Untested. Options:
-
-        * `backlog` adjust the eventlet backlog parameter which is the maximum
-          number of queued connections. Should be at least 1; the maximum
-          value is system-dependent.
-        * `family`: (default is 2) socket family, optional. See socket
-          documentation for available families.
-    """
-
-    def run(self, handler):
-        from eventlet import wsgi, listen, patcher
-        if not patcher.is_monkey_patched(os):
-            msg = "Bottle requires eventlet.monkey_patch() (before import)"
-            raise RuntimeError(msg)
-        socket_args = {}
-        for arg in ('backlog', 'family'):
-            try:
-                socket_args[arg] = self.options.pop(arg)
-            except KeyError:
-                pass
-        address = (self.host, self.port)
-        try:
-            wsgi.server(listen(address, **socket_args), handler,
-                        log_output=(not self.quiet))
-        except TypeError:
-            # Fallback, if we have old version of eventlet
-            wsgi.server(listen(address), handler)
-
-
-class BjoernServer(ServerAdapter):
-    """ Fast server written in C: https://github.com/jonashaag/bjoern """
-
-    def run(self, handler):
-        from bjoern import run
-        run(handler, self.host, self.port)
-
-class AsyncioServerAdapter(ServerAdapter):
-    """ Extend ServerAdapter for adding custom event loop """
-    def get_event_loop(self):
-        pass
-
-class AiohttpServer(AsyncioServerAdapter):
-    """ Asynchronous HTTP client/server framework for asyncio
-        https://pypi.python.org/pypi/aiohttp/
-        https://pypi.org/project/aiohttp-wsgi/
-    """
-
-    def get_event_loop(self):
-        import asyncio
-        return asyncio.new_event_loop()
-
-    def run(self, handler):
-        import asyncio
-        from aiohttp_wsgi.wsgi import serve
-        self.loop = self.get_event_loop()
-        asyncio.set_event_loop(self.loop)
-
-        if 'BOTTLE_CHILD' in os.environ:
-            import signal
-            signal.signal(signal.SIGINT, lambda s, f: self.loop.stop())
-
-        serve(handler, host=self.host, port=self.port)
-
-
-class AiohttpUVLoopServer(AiohttpServer):
-    """uvloop
-       https://github.com/MagicStack/uvloop
-    """
-    def get_event_loop(self):
-        import uvloop
-        return uvloop.new_event_loop()
-
-class AutoServer(ServerAdapter):
-    """ Untested. """
-    adapters = [WaitressServer, PasteServer, TwistedServer, CherryPyServer,
-                CherootServer, WSGIRefServer]
-
-    def run(self, handler):
-        for sa in self.adapters:
-            try:
-                return sa(self.host, self.port, **self.options).run(handler)
-            except ImportError:
-                pass
-
-
-server_names = {
-    'cgi': CGIServer,
-    'flup': FlupFCGIServer,
-    'wsgiref': WSGIRefServer,
-    'waitress': WaitressServer,
-    'cherrypy': CherryPyServer,
-    'cheroot': CherootServer,
-    'paste': PasteServer,
-    'fapws3': FapwsServer,
-    'tornado': TornadoServer,
-    'gae': AppEngineServer,
-    'twisted': TwistedServer,
-    'diesel': DieselServer,
-    'meinheld': MeinheldServer,
-    'gunicorn': GunicornServer,
-    'eventlet': EventletServer,
-    'gevent': GeventServer,
-    'bjoern': BjoernServer,
-    'aiohttp': AiohttpServer,
-    'uvloop': AiohttpUVLoopServer,
-    'auto': AutoServer,
-}
+server_names = {'tornado': TornadoServer}
+# server_names = {
+#     'cgi': CGIServer,
+#     'flup': FlupFCGIServer,
+#     'wsgiref': WSGIRefServer,
+#     'waitress': WaitressServer,
+#     'cherrypy': CherryPyServer,
+#     'cheroot': CherootServer,
+#     'paste': PasteServer,
+#     'fapws3': FapwsServer,
+#     'tornado': TornadoServer,
+#     'gae': AppEngineServer,
+#     'twisted': TwistedServer,
+#     'diesel': DieselServer,
+#     'meinheld': MeinheldServer,
+#     'gunicorn': GunicornServer,
+#     'eventlet': EventletServer,
+#     'gevent': GeventServer,
+#     'bjoern': BjoernServer,
+#     'aiohttp': AiohttpServer,
+#     'uvloop': AiohttpUVLoopServer,
+#     'auto': AutoServer,
+# }
 
 ###############################################################################
 # Application Control ##########################################################
@@ -3890,50 +3587,6 @@ class BaseTemplate(object):
         or directly, as keywords (kwargs).
         """
         raise NotImplementedError
-
-
-class MakoTemplate(BaseTemplate):
-    def prepare(self, **options):
-        from mako.template import Template
-        from mako.lookup import TemplateLookup
-        options.update({'input_encoding': self.encoding})
-        options.setdefault('format_exceptions', bool(DEBUG))
-        lookup = TemplateLookup(directories=self.lookup, **options)
-        if self.source:
-            self.tpl = Template(self.source, lookup=lookup, **options)
-        else:
-            self.tpl = Template(uri=self.name,
-                                filename=self.filename,
-                                lookup=lookup, **options)
-
-    def render(self, *args, **kwargs):
-        for dictarg in args:
-            kwargs.update(dictarg)
-        _defaults = self.defaults.copy()
-        _defaults.update(kwargs)
-        return self.tpl.render(**_defaults)
-
-
-class CheetahTemplate(BaseTemplate):
-    def prepare(self, **options):
-        from Cheetah.Template import Template
-        self.context = threading.local()
-        self.context.vars = {}
-        options['searchList'] = [self.context.vars]
-        if self.source:
-            self.tpl = Template(source=self.source, **options)
-        else:
-            self.tpl = Template(file=self.filename, **options)
-
-    def render(self, *args, **kwargs):
-        for dictarg in args:
-            kwargs.update(dictarg)
-        self.context.vars.update(self.defaults)
-        self.context.vars.update(kwargs)
-        out = str(self.tpl)
-        self.context.vars.clear()
-        return out
-
 
 class Jinja2Template(BaseTemplate):
     def prepare(self, filters=None, tests=None, globals={}, **kwargs):
@@ -4262,9 +3915,6 @@ def template(*args, **kwargs):
     return TEMPLATES[tplid].render(kwargs)
 
 
-mako_template = functools.partial(template, template_adapter=MakoTemplate)
-cheetah_template = functools.partial(template,
-                                     template_adapter=CheetahTemplate)
 jinja2_template = functools.partial(template, template_adapter=Jinja2Template)
 
 
@@ -4296,9 +3946,6 @@ def view(tpl_name, **defaults):
 
     return decorator
 
-
-mako_view = functools.partial(view, template_adapter=MakoTemplate)
-cheetah_view = functools.partial(view, template_adapter=CheetahTemplate)
 jinja2_view = functools.partial(view, template_adapter=Jinja2Template)
 
 ###############################################################################
@@ -4377,8 +4024,111 @@ class View:
     def render(self, **kwargs):
         return jinja2_template("views/%s" % (self.view), **kwargs)
 
+###############################################################################
+# Config Utility ##############################################################
+###############################################################################
+class Loader(yaml.SafeLoader):
+    """YAML Loader with `!include` constructor."""
+
+    def __init__(self, stream: IO) -> None:
+        """Initialise Loader."""
+
+        try:
+            self._root = os.path.split(stream.name)[0]
+        except AttributeError:
+            self._root = os.path.curdir
+
+        super().__init__(stream)
 
 
+def _config_include(loader: Loader, node: yaml.Node) -> Any:
+    """Include file referenced at node."""
+
+    filename = os.path.abspath(os.path.join(loader._root, loader.construct_scalar(node)))
+    extension = os.path.splitext(filename)[1].lstrip('.')
+
+    with open(filename, 'r') as f:
+        if extension in ('yaml', 'yml'):
+            return yaml.load(f, Loader)
+        elif extension in ('json', ):
+            return json.load(f)
+        else:
+            return ''.join(f.readlines())
+
+def _config_env(loader: Loader, node: yaml.Node) -> Any:
+    """set value of key at node from environment variable"""
+    if node.value in os.environ:
+        return os.environ[node.value]
+    raise Exception("Undefined environment variable '%s' referenced in appconfig file." % (node.value))
+
+
+class AppConfig:
+    '''
+    This component is responsible for configuration management.
+    CURRENT SOURCES:
+
+        1) Environment Variables
+            Environment variables can be referenced in the config file.
+            Example:
+
+            foo: !env 'FOO'
+
+            The value of "foo" would be set to whatever the value of the 
+            environment variable 'FOO' was. If there is no value, an exception
+            is raised.
+        
+        2) Config File
+            Config files must be valid yaml files with *.yaml extension. 
+            They must be located in the /config directory in order to be evaluated properly.
+            To read values from a config file, simply pass the name of the config file, without
+            the yaml extension, into the config class constructor. Then access the values of the
+            variables as props.
+
+            Assuming there is a file called "api.dev.yaml" located in the config directory, this
+            would be a valid example:
+            
+            Example:
+                c = Config("api.dev")
+                print(c.host_address)  
+    TODO:
+        Nice to haves would be additional config sources such as:
+        
+        1) service - Get config from a service endpoint (JSON)
+            handy for more complex setups where a config service
+            could be used
+        
+        2) db - Get config from a database
+            for this one, you'd simply pass connection details
+            to the database, and config opts would be loaded
+            automatically.
+    '''
+ 
+    def __init__(self, config_dir="config", env="dev"):
+        """ 
+        The constructor for Config class. 
+        Parameters: 
+           env (string): load config vals based on env.
+        """
+        # NOTE: if env is left empty, then environment variables
+        # will be used as the default source for config props.
+        yaml.add_constructor('!include', _config_include, Loader)
+        yaml.add_constructor('!env', _config_env, Loader)
+        
+        if env != "":
+            config = ("%s/%s.yaml" % (config_dir, env))
+        
+            # check to see if the config file exist
+            if not os.path.isfile(config):
+                raise FileNotFoundError("the app config file (%s.yaml) was not found in the app config directory (%s) " % (env, config_dir))
+        
+            with open(config, 'r') as f:
+                confopts = yaml.load(f, Loader=Loader)
+                if confopts is not None:
+                    for opt in confopts:
+                        setattr(self, opt, confopts[opt])
+        else:
+            raise Exception("a valid environment option must be set for appconfig")
+        print("appconfig: %s" % (config))
 
 ###############################################################################
 # Constants and Globals ########################################################
